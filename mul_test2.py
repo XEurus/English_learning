@@ -3,7 +3,6 @@ import spacy
 from docx import Document
 from docx.enum.text import WD_COLOR_INDEX
 import multiprocessing
-import re
 
 def init_pool(shared_word_list, shared_word_info):
     global word_set
@@ -40,9 +39,12 @@ def extract_headwords_and_info_from_file(file_path):
                         # 提取词义和其他信息（根据您的 JSON 结构调整）
                         content = data.get('content', {})
                         word_info = content.get('word', {}).get('content', {})
-                        # 这里提取释义，可以根据实际情况调整
+                        # 提取释义
                         translation = word_info.get('trans', [])
-                        trans_text = '; '.join([tran.get('tranCn', '') for tran in translation])
+                        if translation:
+                            trans_text = '; '.join([tran.get('tranCn', '') for tran in translation])
+                        else:
+                            trans_text = ''
                         word_info_dict[head_word.lower()] = trans_text
                         headwords.append(head_word)
                     except (json.JSONDecodeError, KeyError) as e:
@@ -56,66 +58,65 @@ def extract_headwords_and_info_from_file(file_path):
 
 def process_paragraph(paragraph_text):
     global word_set, word_info_dict, nlp
-    doc = nlp(paragraph_text)
     new_runs = []
     found_words = set()
-    sentence_end_positions = []
-    for sent in doc.sents:
-        sentence_end_positions.append(sent.end_char)
 
-    token_positions = {}
-    for token in doc:
-        text = token.text_with_ws
-        word = token.lemma_.lower()
-        start_pos = token.idx
-        end_pos = token.idx + len(token.text)
-        token_positions[(start_pos, end_pos)] = token
+    # 以换行符为分隔，拆分段落为句子
+    sentences = paragraph_text.split('\n')
 
-    idx = 0
-    while idx < len(doc.text):
-        for (start_pos, end_pos), token in token_positions.items():
-            if start_pos == idx:
-                text = token.text_with_ws
-                word = token.lemma_.lower()
-                if word in word_set:
-                    found_words.add(word)
-                    run_info = {
-                        'text': text,
-                        'highlight': True,
-                        'word': word,
-                        'position': end_pos
-                    }
-                else:
-                    run_info = {
-                        'text': text,
-                        'highlight': False,
-                        'position': end_pos
-                    }
-                new_runs.append(run_info)
-                idx += len(text)
-                break
-        else:
-            # 未匹配到token，直接添加字符
-            new_runs.append({
-                'text': doc.text[idx],
-                'highlight': False,
-                'position': idx+1
-            })
-            idx += 1
+    for sentence_text in sentences:
+        sentence_found_words = set()
+        sentence_runs = []
 
-    # 在句子末尾添加释义
-    for i, run_info in enumerate(new_runs):
-        if 'word' in run_info and run_info['highlight']:
-            # 检查是否是句子的结尾
-            if run_info['position'] in sentence_end_positions:
-                # 添加释义
-                meaning = word_info_dict.get(run_info['word'], '')
+        # 使用 spaCy 处理每个句子，以便进行词形还原和标记化
+        doc = nlp(sentence_text)
+
+        for token in doc:
+            text = token.text_with_ws
+            word = token.lemma_.lower()
+            if word in word_set:
+                found_words.add(word)
+                sentence_found_words.add(word)
+                run_info = {
+                    'text': text,
+                    'highlight': True
+                }
+            else:
+                run_info = {
+                    'text': text,
+                    'highlight': False
+                }
+            sentence_runs.append(run_info)
+
+        # 将句子的 runs 添加到 new_runs
+        new_runs.extend(sentence_runs)
+
+        # 如果该句子中有高亮的单词，在句子后面添加释义
+        if sentence_found_words:
+            # 组装释义信息
+            meanings = []
+            for fw in sentence_found_words:
+                meaning = word_info_dict.get(fw, '')
                 if meaning:
-                    # 创建一个新的 run，包含释义
-                    new_runs.insert(i+1, {
-                        'text': f' [{run_info["word"]}: {meaning}]',
-                        'highlight': False
-                    })
+                    meanings.append(f"{fw}: {meaning}")
+                else:
+                    meanings.append(f"{fw}")
+            # 创建新的 run，包含释义信息
+            meanings_text = ' [' + '; '.join(meanings) + ']'
+            new_runs.append({
+                'text': meanings_text,
+                'highlight': False
+            })
+
+        # 添加换行符，以保持原有的段落结构
+        new_runs.append({
+            'text': '\n',
+            'highlight': False
+        })
+
+    # 去除最后多余的换行符
+    if new_runs and new_runs[-1]['text'] == '\n':
+        new_runs.pop()
 
     return new_runs, found_words
 
@@ -139,7 +140,7 @@ if __name__ == '__main__':
     word_set = set(word_list)  # 在主进程中定义 word_set，便于后续计算
 
     # 加载文档
-    document = Document('Stone.docx')
+    document = Document('SorcererStone.docx')
     print("document loaded")
     # 提取所有段落的文本
     paragraphs = [para.text for para in document.paragraphs]
@@ -153,6 +154,7 @@ if __name__ == '__main__':
     pool.close()
     pool.join()
 
+    print("search finish")
     # 创建新的文档
     new_document = Document()
 
@@ -170,12 +172,12 @@ if __name__ == '__main__':
                 run.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
     # 保存新的文档
-    new_document.save('highlighted_document.docx')
+    new_document.save('highlighted_document-totle-2.docx')
 
     # 计算未找到的单词
     found_words_list = list(total_found_words)
     not_found_words = list(word_set - total_found_words)
-
+ 
     # 输出找到和未找到的单词数量
     print(f"找到的单词数量：{len(found_words_list)}")
     print(f"未找到的单词数量：{len(not_found_words)}")
