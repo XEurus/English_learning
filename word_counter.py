@@ -67,7 +67,7 @@ def save_results_to_file(found_words, not_found_words, output_dir=None):
     except Exception as e:
         print(f"保存结果时出错: {e}")
 
-def shuffle_words_and_group(input_file_path, output_file_path, group_size=20):
+def shuffle_words_and_group(input_file_path, output_file_path, group_size=20,shuffle=False):
     """
     读取文本文件中的单词，随机打乱顺序，然后按指定大小分组输出到新文件，
     每组之间插入一行空白
@@ -77,7 +77,8 @@ def shuffle_words_and_group(input_file_path, output_file_path, group_size=20):
         words = read_words_from_file(input_file_path)
         
         # 随机打乱单词顺序
-        random.shuffle(words)
+        if shuffle:
+            random.shuffle(words)
         
         # 按指定大小分组
         grouped_words = []
@@ -94,7 +95,7 @@ def shuffle_words_and_group(input_file_path, output_file_path, group_size=20):
         with open(output_file_path, 'w', encoding='utf-8') as file:
             file.write('\n\n'.join(grouped_words))
         
-        print(f"已将打乱并分组的单词保存到 '{output_file_path}'")
+        print(f"分组的单词保存到 '{output_file_path}'")
         return True
     except Exception as e:
         print(f"打乱并分组单词时出错: {e}")
@@ -165,8 +166,8 @@ if __name__ == "__main__":
         shuffle_words_and_group(input_file, output_file, group_size)
     else:
         # 默认文件路径
-        word_file_path = 'u1.txt'
-        markdown_file_path = 'generated_story.txt'
+        word_file_path = '2025考研英语词汇红宝书.txt'
+        markdown_file_path = 'Paper\FM\Lipman 等 - 2024 - Flow Matching Guide and Code_1741338363.2378786_origin_1741410719.829996.md'
         
         # 允许通过命令行参数指定不同的文件
         if len(sys.argv) > 1:
