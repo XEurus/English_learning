@@ -18,7 +18,7 @@ has_token_data = False
 get_success = 0
 max_rps = [120, 60]
 
-def translate_paper(input_file=None, output_dir=None, model="abab6.5s-chat", max_rps=[120, 60], max_concurrency=20,api_key=None,api_base="http://127.0.0.1:33019/v1"):
+def translate_paper(input_file=None, output_dir=None, model="abab6.5s-chat", max_rps=[120, 60], max_concurrency=20,api_key=None,api_base="http://127.0.0.1:33019/v1", progress_callback=None, exit_on_error=True):
     """
     翻译Markdown文件，生成中文和双语版本，按行分割逐行对照翻译
     
@@ -47,7 +47,9 @@ def translate_paper(input_file=None, output_dir=None, model="abab6.5s-chat", max
         print(f"已连接到API服务: {api_base}")
     except Exception as e:
         print(f"初始化API客户端时出错: {e}")
-        sys.exit(1)
+        if exit_on_error:
+            sys.exit(1)
+        return False
     
     # 如果未提供输入文件，提示用户输入
     if input_file is None:
@@ -164,7 +166,13 @@ def translate_paper(input_file=None, output_dir=None, model="abab6.5s-chat", max
         return None, None
     # 预处理行
     processed_lines = preprocess_lines(lines)
-    print(f"预处理后共 {len(processed_lines)} 行")
+    total_lines = len(processed_lines)
+    print(f"预处理后共 {total_lines} 行")
+    if progress_callback:
+        try:
+            progress_callback(0, total_lines)
+        except Exception:
+            pass
     
     # 用于存储翻译结果的字典
     translations = {}
@@ -210,11 +218,8 @@ def translate_paper(input_file=None, output_dir=None, model="abab6.5s-chat", max
 你是一个专业的英译中翻译器，专门用于逐行翻译Markdown文档。
 ## 翻译规则：
 1. 保持Markdown格式不变，包括标题、列表、强调等
-2. 代码块、表格、图片链接、数学公式等内容不需要翻译
-3. 将英文翻译成流畅、自然的中文
-4. 保留原文中的专业术语，在括号中添加中文翻译
-## 特殊处理：
-- 对于技术名词，保留原文，可以在括号中添加中文解释，对于缩写词，保留原文，可以在括号中添加全称和中文解释
+2. 代码块、图片链接、数学公式等内容不需要翻译
+3. 将中文翻译成流畅、自然的英文
 ## 输出要求：
 - 只返回翻译结果，不要输出额外内容"""
                 },
@@ -250,12 +255,19 @@ def translate_paper(input_file=None, output_dir=None, model="abab6.5s-chat", max
     
     # 使用线程池并发翻译
     print(f"开始并发翻译，最大并发数: {max_concurrency}")
+    completed_lines = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_concurrency) as executor:
         future_to_index = {executor.submit(translate_line, i, line): i for i, line in enumerate(processed_lines)}
         
         for future in concurrent.futures.as_completed(future_to_index):
             index, translation = future.result()
             translations[index] = translation
+            completed_lines += 1
+            if progress_callback:
+                try:
+                    progress_callback(completed_lines, total_lines)
+                except Exception:
+                    pass
     
     # 按原始顺序组织翻译结果
     ordered_translations = [translations.get(i, "") for i in range(len(processed_lines))]
@@ -290,9 +302,12 @@ def translate_paper(input_file=None, output_dir=None, model="abab6.5s-chat", max
         print(f"保存中英对照文档时出错: {e}")
     
     print(f"\n=== 翻译统计 ===")
-    print(f"总处理行数: {len(processed_lines)}")
+    print(f"总处理行数: {total_lines}")
     print(f"总API请求次数: {request_counter},成功次数: {get_success}")
-    print(f"请求成功率: {get_success/request_counter*100:.2f}%")
+    if request_counter > 0:
+        print(f"请求成功率: {get_success/request_counter*100:.2f}%")
+    else:
+        print(f"请求成功率: 0.00%")
     
     if has_token_data and total_tokens > 0:
         print(f"\n=== Token使用统计 ===")
@@ -305,17 +320,35 @@ def translate_paper(input_file=None, output_dir=None, model="abab6.5s-chat", max
 
     return True
 if __name__ == "__main__":
+    from config import (
+        DEFAULT_INPUT_FILE,
+        DEFAULT_OUTPUT_DIR,
+        DEFAULT_MODEL,
+        DEFAULT_MAX_RPS,
+        DEFAULT_MAX_CONCURRENCY,
+        DEFAULT_API_KEY,
+        DEFAULT_API_BASE,
+    )
+
     parser = argparse.ArgumentParser(description='Markdown Translator')
-    parser.add_argument('--input_file', type=str, default="C:/Users\Eurus\Desktop\Paper\CLIP\CLIP_1742963979.2057154.md", help='Input Markdown file path')
-    parser.add_argument('--output_dir', type=str, default="C:/Users\Eurus\Desktop\Paper\CLIP", help='Output directory')
-    parser.add_argument('--model', type=str, default="bytedance/DeepSeek-V3-Data", help='Model to use')
-    parser.add_argument('--max_rps', type=int, nargs=2, default=[29000, 60], help='Maximum requests per second [calls, period]')
-    parser.add_argument('--max_concurrency', type=int, default=256, help='Maximum number of concurrent threads')
+    parser.add_argument('--input_file', type=str, default=DEFAULT_INPUT_FILE, help='Input Markdown file path')
+    parser.add_argument('--output_dir', type=str, default=DEFAULT_OUTPUT_DIR, help='Output directory')
+    parser.add_argument('--model', type=str, default=DEFAULT_MODEL, help='Model to use')
+    parser.add_argument('--max_rps', type=int, nargs=2, default=DEFAULT_MAX_RPS, help='Maximum requests per second [calls, period]')
+    parser.add_argument('--max_concurrency', type=int, default=DEFAULT_MAX_CONCURRENCY, help='Maximum number of concurrent threads')
     args = parser.parse_args()
     # abab6.5s-chat https://api.siliconflow.cn/v1/chat/completions
     # Doubao1.5-32k
     # bytedance/DeepSeek-V3
     # 设置API配置
-    api_key = "sk-9FCirRxmIWGXD9N6CcFb46070bE243De990cCd976a3dF320"  # 请替换为您的API密钥
-    api_base = "http://192.168.5.137:33201/v1"  # 请替换为您的API基础URL
-    translate_paper(input_file=args.input_file, output_dir=args.output_dir, model=args.model, max_rps=args.max_rps, max_concurrency=args.max_concurrency,api_key=api_key,api_base=api_base)
+    api_key = DEFAULT_API_KEY  # 请替换为您的API密钥
+    api_base = DEFAULT_API_BASE  # 请替换为您的API基础URL
+    translate_paper(
+        input_file=args.input_file,
+        output_dir=args.output_dir,
+        model=args.model,
+        max_rps=args.max_rps,
+        max_concurrency=args.max_concurrency,
+        api_key=api_key,
+        api_base=api_base,
+    )
